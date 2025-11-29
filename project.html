@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Task Manager — CRUD + Local Storage</title>
+<style>
+  :root{
+    --bg:#0f1724; --card:#0b1220; --accent:#7c5cff; --muted:#9aa3b2; --success:#2ecc71;
+    --glass: rgba(255,255,255,0.03);
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; min-height:100vh; background:linear-gradient(180deg,#071122 0%, #091827 100%);
+    color:#e6eef6; display:flex; align-items:center; justify-content:center; padding:32px;
+  }
+  .app{
+    width:100%; max-width:920px; background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+    border-radius:14px; padding:24px; box-shadow:0 10px 30px rgba(2,6,23,0.7);
+  }
+  header{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px}
+  header h1{font-size:20px; margin:0}
+  .controls{display:flex; gap:8px; align-items:center}
+  input[type="text"], textarea, select {
+    background:var(--glass); border:1px solid rgba(255,255,255,0.04); color:inherit; padding:10px 12px;
+    border-radius:10px; outline:none; min-width:160px;
+  }
+  .new-task {display:flex; gap:8px; align-items:flex-start; margin-bottom:12px}
+  .new-task input[type="text"]{flex:1}
+  button{
+    background:linear-gradient(180deg,var(--accent), #5d43e6); border:0; color:white; padding:10px 12px;
+    border-radius:10px; cursor:pointer; font-weight:600;
+  }
+  .btn-ghost{background:transparent; border:1px solid rgba(255,255,255,0.04); color:var(--muted); padding:8px 10px}
+  .toolbar{display:flex; gap:8px; align-items:center; margin-bottom:14px; flex-wrap:wrap}
+  .stats{color:var(--muted); font-size:13px}
+  .list-wrap{background:rgba(0,0,0,0.12); padding:12px; border-radius:10px; max-height:520px; overflow:auto;}
+  ul.task-list{list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:8px}
+  li.task{
+    display:flex; align-items:center; gap:12px; background:linear-gradient(180deg, rgba(255,255,255,0.01), transparent);
+    padding:10px; border-radius:10px;
+  }
+  .task .title{flex:1; display:flex; gap:8px; align-items:center}
+  .task .title .text{font-weight:600}
+  .task .meta{display:flex; gap:8px; align-items:center}
+  .chip{background:rgba(255,255,255,0.03); padding:6px 8px; border-radius:999px; font-size:12px; color:var(--muted)}
+  .muted{color:var(--muted)}
+  .task.completed .text{text-decoration:line-through; color:var(--muted)}
+  .actions button{background:transparent; border:0; color:var(--muted); cursor:pointer; padding:8px; border-radius:8px}
+  .hidden{display:none}
+  .filter-btn[aria-pressed="true"]{outline:2px solid rgba(124,92,255,0.28)}
+  /* Responsive */
+  @media (max-width:640px){
+    .controls{flex-direction:column; align-items:stretch}
+    header{flex-direction:column; align-items:flex-start; gap:12px}
+  }
+</style>
+</head>
+<body>
+  <main class="app" id="app" aria-labelledby="title">
+    <header>
+      <h1 id="title">Task Manager — CRUD + Local Storage</h1>
+      <div class="controls" role="region" aria-label="controls">
+        <div class="stats" id="stats">0 tasks</div>
+      </div>
+    </header>
+
+    <section class="new-task" aria-label="add task">
+      <input id="taskInput" type="text" placeholder="Add a new task (press Enter or click Add)" aria-label="New task title" />
+      <select id="priority">
+        <option value="normal">Normal</option>
+        <option value="high">High priority</option>
+        <option value="low">Low priority</option>
+      </select>
+      <button id="addBtn">Add</button>
+    </section>
+
+    <section class="toolbar" aria-label="toolbar">
+      <div>
+        <label class="muted">Search</label>
+        <input type="text" id="search" placeholder="Search tasks..." />
+      </div>
+
+      <div>
+        <label class="muted">Filter</label>
+        <div role="group" aria-label="filter tasks" style="display:inline-flex; gap:6px; margin-left:6px">
+          <button class="btn-ghost filter-btn" data-filter="all" aria-pressed="true">All</button>
+          <button class="btn-ghost filter-btn" data-filter="active">Active</button>
+          <button class="btn-ghost filter-btn" data-filter="completed">Completed</button>
+        </div>
+      </div>
+
+      <div>
+        <label class="muted">Sort</label>
+        <select id="sort">
+          <option value="created_desc">Newest</option>
+          <option value="created_asc">Oldest</option>
+          <option value="priority">Priority</option>
+        </select>
+      </div>
+
+      <div style="margin-left:auto">
+        <button id="clearCompleted" class="btn-ghost">Clear Completed</button>
+        <button id="exportBtn" class="btn-ghost">Export JSON</button>
+        <button id="importBtn" class="btn-ghost">Import</button>
+        <input id="importFile" type="file" accept="application/json" class="hidden" />
+      </div>
+    </section>
+
+    <section class="list-wrap" aria-live="polite">
+      <ul class="task-list" id="taskList" role="list"></ul>
+    </section>
+  </main>
+
+<script>
+(() => {
+  // Task Manager with CRUD operations and localStorage persistence.
+  const STORAGE_KEY = 'tm.tasks.v1';
+
+  // Elements
+  const taskInput = document.getElementById('taskInput');
+  const addBtn = document.getElementById('addBtn');
+  const taskList = document.getElementById('taskList');
+  const stats = document.getElementById('stats');
+  const prioritySelect = document.getElementById('priority');
+  const searchInput = document.getElementById('search');
+  const filterBtns = document.querySelectorAll('.filter-btn');
+  const sortSelect = document.getElementById('sort');
+  const clearCompletedBtn = document.getElementById('clearCompleted');
+  const exportBtn = document.getElementById('exportBtn');
+  const importBtn = document.getElementById('importBtn');
+  const importFile = document.getElementById('importFile');
+
+  // In-memory state
+  let tasks = [];
+  let state = { filter: 'all', query: '', sort: 'created_desc' };
+
+  // Utilities
+  function uid() {
+    return 't_' + Math.random().toString(36).slice(2,9);
+  }
+
+  function save(){
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+  }
+
+  function load(){
+    try{
+      const raw = localStorage.getItem(STORAGE_KEY);
+      tasks = raw ? JSON.parse(raw) : [];
+    }catch(e){
+      console.error('Failed to load tasks', e);
+      tasks = [];
+    }
+  }
+
+  function render(){
+    // Filter/search/sort
+    let out = tasks.slice();
+
+    // search
+    const q = state.query.trim().toLowerCase();
+    if(q){
+      out = out.filter(t => (t.title + ' ' + (t.notes||'')).toLowerCase().includes(q));
+    }
+
+    // filter
+    if(state.filter === 'active') out = out.filter(t => !t.completed);
+    if(state.filter === 'completed') out = out.filter(t => t.completed);
+
+    // sort
+    if(state.sort === 'created_desc') out.sort((a,b)=>b.created-a.created);
+    if(state.sort === 'created_asc') out.sort((a,b)=>a.created-b.created);
+    if(state.sort === 'priority') {
+      const order = { high: -1, normal: 0, low: 1 };
+      out.sort((a,b)=> order[a.priority]-order[b.priority] || b.created - a.created);
+    }
+
+    // Render list
+    taskList.innerHTML = '';
+    if(out.length === 0){
+      const li = document.createElement('li');
+      li.className = 'task';
+      li.innerHTML = <div class="title muted">No tasks match your criteria</div>;
+      taskList.appendChild(li);
+    } else {
+      out.forEach(task => {
+        const li = document.createElement('li');
+        li.className = 'task' + (task.completed ? ' completed' : '');
+        li.dataset.id = task.id;
+        li.innerHTML = `
+          <div class="title">
+            <input type="checkbox" class="toggle" ${task.completed ? 'checked' : ''} aria-label="Mark task complete" />
+            <div>
+              <div class="text">${escapeHtml(task.title)}</div>
+              <div class="muted" style="font-size:12px">${task.notes ? escapeHtml(task.notes) + ' • ' : ''}${new Date(task.created).toLocaleString()}</div>
+            </div>
+          </div>
+          <div class="meta">
+            <div class="chip">${task.priority}</div>
+            <div class="actions" role="group" aria-label="task actions">
+              <button class="edit" title="Edit task">✏</button>
+              <button class="delete" title="Delete task">🗑</button>
+            </div>
+          </div>
+        `;
+        taskList.appendChild(li);
+      });
+    }
+
+    // Stats
+    const total = tasks.length;
+    const completed = tasks.filter(t => t.completed).length;
+    stats.textContent = ${total} task${total !== 1 ? 's' : ''} • ${completed} completed;
+  }
+
+  function escapeHtml(s){
+    if(!s) return '';
+    return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
+  }
+
+  // CRUD ops
+  function addTask(title, {priority='normal', notes=''}={}){
+    const t = { id: uid(), title: title.trim(), notes: notes.trim(), completed:false, priority, created: Date.now() };
+    tasks.push(t);
+    save();
+    render();
+    return t;
+  }
+
+  function updateTask(id, patch){
+    const idx = tasks.findIndex(t => t.id === id); if(idx === -1) return;
+    tasks[idx] = {...tasks[idx], ...patch};
+    save(); render();
+  }
+
+  function deleteTask(id){
+    tasks = tasks.filter(t => t.id !== id);
+    save(); render();
+  }
+
+  function clearCompleted(){
+    tasks = tasks.filter(t => !t.completed); save(); render();
+  }
+
+  // Event delegation for list actions
+  taskList.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('button, input.toggle');
+    if(!btn) return;
+
+    const li = ev.target.closest('li.task');
+    if(!li) return;
+    const id = li.dataset.id;
+    if(btn.classList.contains('edit')){
+      openEditPopup(id);
+    } else if(btn.classList.contains('delete')){
+      if(confirm('Delete this task?')) deleteTask(id);
+    } else if(btn.classList.contains('toggle') || btn.tagName === 'INPUT' && btn.classList.contains('toggle')){
+      updateTask(id, { completed: btn.checked });
+    }
+  });
+
+  // Inline edit via prompt (simple)
+  function openEditPopup(id){
+    const t = tasks.find(x => x.id === id);
+    if(!t) return;
+    const newTitle = prompt('Edit title', t.title);
+    if(newTitle === null) return;
+    const newNotes = prompt('Edit notes (optional)', t.notes || '') ?? '';
+    const newPriority = prompt('Priority (high, normal, low)', t.priority) || t.priority;
+    updateTask(id, { title: newTitle.trim() || t.title, notes: newNotes.trim(), priority: ['high','normal','low'].includes(newPriority) ? newPriority : t.priority });
+  }
+
+  // Input handlers
+  addBtn.addEventListener('click', () => {
+    const val = taskInput.value.trim();
+    if(!val) { taskInput.focus(); return; }
+    addTask(val, { priority: prioritySelect.value });
+    taskInput.value = '';
+    prioritySelect.value = 'normal';
+    taskInput.focus();
+  });
+
+  taskInput.addEventListener('keydown', (e)=>{
+    if(e.key === 'Enter') addBtn.click();
+  });
+
+  // Search (debounce)
+  let searchTimer = null;
+  searchInput.addEventListener('input', (e)=>{
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(()=> {
+      state.query = e.target.value;
+      render();
+    }, 180);
+  });
+
+  // Filters
+  filterBtns.forEach(b => {
+    b.addEventListener('click', () => {
+      filterBtns.forEach(x => x.setAttribute('aria-pressed','false'));
+      b.setAttribute('aria-pressed','true');
+      state.filter = b.dataset.filter;
+      render();
+    });
+  });
+
+  sortSelect.addEventListener('change', (e) => {
+    state.sort = e.target.value;
+    render();
+  });
+
+  clearCompletedBtn.addEventListener('click', () => {
+    if(confirm('Remove all completed tasks?')) clearCompleted();
+  });
+
+  // Export / import
+  exportBtn.addEventListener('click', () => {
+    const blob = new Blob([JSON.stringify(tasks, null, 2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'tasks-export.json'; document.body.appendChild(a); a.click();
+    a.remove(); URL.revokeObjectURL(url);
+  });
+
+  importBtn.addEventListener('click', () => importFile.click());
+  importFile.addEventListener('change', async (e) => {
+    const f = e.target.files[0]; if(!f) return;
+    try {
+      const txt = await f.text();
+      const imported = JSON.parse(txt);
+      if(!Array.isArray(imported)) throw new Error('Invalid JSON structure');
+      // Merge intelligently: avoid id collisions
+      const existingIds = new Set(tasks.map(t=>t.id));
+      const toAdd = imported.map(t => ({...t, id: existingIds.has(t.id) ? uid() : t.id}));
+      tasks = tasks.concat(toAdd);
+      save(); render();
+      alert('Imported ' + toAdd.length + ' tasks.');
+    } catch(err){
+      alert('Failed to import: ' + err.message);
+    } finally {
+      importFile.value = '';
+    }
+  });
+
+  // Initialization
+  load();
+  render();
+
+  // Expose for console testing (optional)
+  window._tm = { tasks, addTask, updateTask, deleteTask, save, render };
+})();
+</script>
+</body>
+</html>
